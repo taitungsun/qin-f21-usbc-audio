@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# usbc-rearm-watch — auto-arm the USB-C audio daemon whenever the phone connects.
+# Leave this running in a terminal; every time you plug in the phone (or it
+# reconnects after a reboot), it re-arms the daemon once. Ctrl-C to stop.
+set -u
+ADB=${ADB:-/usr/bin/adb}
+SELF_DIR=$(cd "$(dirname "$0")" && pwd)
+REARM="$SELF_DIR/usbc-rearm"
+
+log() { printf '%s %s\n' "$(date '+%H:%M:%S')" "$*"; }
+log "watching for device — will re-arm USB-C daemon on each connect (Ctrl-C to stop)"
+
+armed_serial=""
+while true; do
+    # block until a device shows up
+    timeout 3600 "$ADB" wait-for-device 2>/dev/null || continue
+    serial=$("$ADB" get-serialno 2>/dev/null | tr -d '\r')
+    if [ -n "$serial" ] && [ "$serial" != "$armed_serial" ]; then
+        log "device $serial connected → arming"
+        if "$REARM"; then armed_serial="$serial"; fi
+    fi
+    # wait for this device to go away before looking again (debounce)
+    while [ "$("$ADB" get-state 2>/dev/null | tr -d '\r')" = "device" ]; do
+        sleep 3
+    done
+    [ "$serial" = "$armed_serial" ] && { log "device $serial disconnected"; armed_serial=""; }
+    sleep 1
+done

@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# usbc-rearm — (re)start the Qin F21 Pro USB-C audio root daemon over ADB.
+# Safe to run repeatedly: if the daemon is already running it does nothing.
+# The daemon must be re-armed after every phone reboot (DumberOS has no working
+# Magisk boot service, so /data/adb/service.d never auto-runs it).
+set -u
+ADB=${ADB:-/usr/bin/adb}
+DAEMON=/data/adb/usbc_daemon_loop.sh
+LAUNCH="setsid /system/bin/sh $DAEMON </dev/null >/dev/null 2>&1 &"
+
+log() { printf '%s %s\n' "$(date '+%H:%M:%S')" "$*"; }
+
+# 1) wait for a device on USB
+log "waiting for device…"
+if ! timeout 60 "$ADB" wait-for-device; then
+    log "ERROR: no device within 60s (check cable / port)"; exit 1
+fi
+
+# 2) elevate to root (adbd restarts → reconnect)
+"$ADB" root >/dev/null 2>&1
+sleep 1
+timeout 30 "$ADB" wait-for-device || { log "ERROR: device gone after 'adb root'"; exit 1; }
+
+# 3) confirm root + daemon script present
+id_ctx=$("$ADB" shell id 2>/dev/null)
+case "$id_ctx" in
+    *uid=0*) : ;;
+    *) log "ERROR: not root (got: $id_ctx). Is this a userdebug build?"; exit 1 ;;
+esac
+if ! "$ADB" shell "[ -f $DAEMON ]" 2>/dev/null; then
+    log "ERROR: $DAEMON not found on device"; exit 1
+fi
+
+# 4) already running?
+running=$("$ADB" shell "ps -A -o PID,ARGS 2>/dev/null | grep usbc_daemon_loop | grep -v grep" 2>/dev/null)
+if [ -n "$running" ]; then
+    log "already running: $(echo "$running" | tr -s ' ')"
+    exit 0
+fi
+
+# 5) launch + verify
+"$ADB" shell "$LAUNCH" >/dev/null 2>&1
+sleep 2
+timeout 20 "$ADB" wait-for-device >/dev/null 2>&1
+running=$("$ADB" shell "ps -A -o PID,ARGS 2>/dev/null | grep usbc_daemon_loop | grep -v grep" 2>/dev/null)
+if [ -n "$running" ]; then
+    log "ARMED ✓  $(echo "$running" | tr -s ' ')"
+    exit 0
+else
+    log "ERROR: launch did not take — retry, or re-seat the cable"
+    exit 1
+fi

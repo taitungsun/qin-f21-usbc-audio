@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Autostart launcher for usbc-rearm-watch: logs to a file and avoids stacking
+# duplicate watchers across logins. Pointed at by ~/.config/autostart.
+LOG="$HOME/.local/state/usbc-rearm-watch.log"
+mkdir -p "$(dirname "$LOG")"
+# don't start a second watcher if one is already running
+if pgrep -f '[u]sbc-rearm-watch$' >/dev/null 2>&1; then
+    echo "$(date '+%F %T') autostart: watcher already running, skipping" >> "$LOG"
+    exit 0
+fi
+echo "$(date '+%F %T') autostart: launching usbc-rearm-watch" >> "$LOG"
+exec "$HOME/.local/bin/usbc-rearm-watch" >> "$LOG" 2>&1

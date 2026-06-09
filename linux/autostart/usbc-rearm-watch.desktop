@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=USB-C Audio Daemon Auto-Arm
+Comment=Re-arms the Qin F21 Pro USB-C audio root daemon whenever the phone connects over ADB
+Exec=/home/user/.local/bin/usbc-rearm-watch-boot
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=false
