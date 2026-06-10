@@ -135,6 +135,19 @@ adb push device/usbc_audio_toggle.sh /data/adb/ && adb shell chmod 755 /data/adb
 adb shell sh /data/adb/usbc_audio_toggle.sh    # -> "USB-C audio ON"
 ```
 
+## Troubleshooting
+
+- **adb keeps dropping / `device descriptor read/64, error -32` in `dmesg`.** This is a
+  marginal **USB-C cable**, not the phone — swap to a known-good cable and use a direct
+  port (no hub). Verified fix; a bad cable also causes "stuck charging" symptoms.
+- **adb shows the device then loses it after the toggle.** Expected if you toggled while
+  on the PC — host mode fights the PC's VBUS and resets the bus (see the caveat above).
+  Re-run `adb kill-server && adb start-server` to re-grab the re-enumerated device.
+- **Daemon won't auto-start on a fresh boot (no PC).** On this device Magisk's boot-script
+  runner doesn't execute, so `service.d` never fires on its own — the daemon must be armed
+  from a PC after each reboot (that's what the `linux/`/`windows/` helpers are for). The
+  daemon self-guards against duplicates via a pidfile, so arming it more than once is safe.
+
 ## License
 
 MIT © 2026 taitungsun. The kernel mechanism described here is reverse-engineered
