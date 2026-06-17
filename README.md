@@ -109,9 +109,45 @@ su -c 'sh /data/adb/usbc_audio_toggle.sh'
 - **⚠️ Don’t toggle while plugged into a PC or charger.** Forcing host mode then fights the incoming VBUS → contention + a USB reset. Only toggle with the **bare DAC** in the port.
 - **Reverts on reboot** (it’s a runtime kernel write). Re‑run the toggle after a reboot, or wire it to a button/widget for convenience.
 
-## Making it convenient (optional)
+## One-tap widget (Termux:Widget)
 
-Since it’s just a root shell command, you can trigger it from anything that can run root: a Tasker/Termux:Widget button, a `service.d` watcher that runs the toggle when you tap a flag file, etc. The core mechanism is the single `option` write above — everything else is just a front‑end.
+The cleanest front-end is a **Termux:Widget** shortcut — tap the widget icon on your home
+screen to toggle USB-C audio on/off. Requires Termux + Termux:Widget installed.
+
+**1. Grant `SYSTEM_ALERT_WINDOW` to Termux** (makes the result toast persist; survives reboot):
+
+```sh
+adb shell appops set com.termux SYSTEM_ALERT_WINDOW allow
+```
+
+**2. Create the shortcut script** (inside Termux):
+
+```sh
+mkdir -p ~/.shortcuts
+cat > ~/.shortcuts/USB-C\ Audio.sh << ‘EOF’
+#!/data/data/com.termux/files/usr/bin/sh
+touch ~/.usbc_toggle_req
+EOF
+chmod 755 ~/.shortcuts/USB-C\ Audio.sh
+```
+
+**3. Arm the on-device daemon** from your PC (once per boot):
+
+```sh
+# Linux
+usbc-rearm          # from linux/usbc-rearm
+
+# Windows
+.\usbc-rearm.ps1    # from windows/usbc-rearm.ps1
+```
+
+The daemon (`usbc_daemon_loop.sh`) watches for `~/.usbc_toggle_req` and runs the toggle
+when it appears. Tapping the widget drops the flag file; the daemon picks it up within
+~1 s, runs the toggle, and the result toast pops up.
+
+**Re-arm after every reboot** — `service.d` doesn’t fire on this device (Magisk boot runner
+is dead), so the daemon needs to be started from a PC. The PC-side watcher scripts
+(`usbc-rearm-watch` / `usbc-rearm-watch.ps1`) do this automatically on each USB connect.
 
 ## Repository layout
 
