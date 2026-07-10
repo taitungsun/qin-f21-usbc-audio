@@ -1,0 +1,17 @@
+# USB-C audio daemon — on-device autostart for the Qin F21 Pro (DumberOS).
+#
+# Goes in /vendor/etc/init/ (SELinux label u:object_r:vendor_configs_file:s0). If /vendor
+# is full (it is on the F21 Pro), append these lines into the last-block slack of an
+# existing *.rc there instead — see device/install-autostart.sh, which handles both.
+#
+# Runs in the phhsu_daemon domain: permissive AND init-launchable on this phh/AOSP-GSI
+# -derived build, so it needs NO Magisk and NO sepolicy patch. init supervises the
+# service and respawns it if it ever dies.
+service usbc_audio_daemon /system/bin/sh /data/adb/usbc_daemon_loop.sh
+    user root
+    group root system
+    seclabel u:r:phhsu_daemon:s0
+    disabled
+
+on property:sys.boot_completed=1
+    start usbc_audio_daemon

@@ -107,7 +107,7 @@ su -c 'sh /data/adb/usbc_audio_toggle.sh'
 - **It's a manual toggle.** The port controller can't sense the audio accessory, so the phone can't auto‑switch — you run the toggle when you plug the DAC in (and again to turn it off).
 - **Power:** host mode holds VBUS at ~100 mA. The script’s auto‑revert means it’s only on while a DAC is actually present.
 - **⚠️ Don’t toggle while plugged into a PC or charger.** Forcing host mode then fights the incoming VBUS → contention + a USB reset. Only toggle with the **bare DAC** in the port.
-- **Reverts on reboot** (it’s a runtime kernel write). Re‑run the toggle after a reboot, or wire it to a button/widget for convenience.
+- **The port toggle reverts on reboot** (it’s a runtime kernel write) — press it again after you plug the DAC back in. The *watcher daemon*, however, can be made to start itself every boot: see **[Auto‑start on boot](#auto-start-on-boot-on-device-no-pc-needed)**.
 
 ## One-tap widget (Termux:Widget)
 
@@ -149,12 +149,78 @@ when it appears. Tapping the widget drops the flag file; the daemon picks it up 
 is dead), so the daemon needs to be started from a PC. The PC-side watcher scripts
 (`usbc-rearm-watch` / `usbc-rearm-watch.ps1`) do this automatically on each USB connect.
 
+## Auto-start on boot, on-device (no PC needed)
+
+The watcher daemon has to be (re)started after every reboot. The `linux/` and `windows/`
+helpers do that from a PC whenever the phone connects — fine when you’re tethered, but a
+reboot away from a computer leaves the daemon dead until you next plug in.
+
+You can make the phone arm the daemon **itself, every boot, with no PC** — and **without
+Magisk and without patching SELinux policy**. Two things about this build make it clean:
+
+1. **`/vendor` is writable at runtime with no dm‑verity** (bootloader unlocked / `orange`
+   verified‑boot state), so a file added there persists across reboots.
+2. Its SELinux policy keeps a **permissive, init‑launchable domain, `phhsu_daemon`**
+   (inherited from the build’s phh/AOSP‑GSI lineage — you can see stock `.rc` files using
+   `seclabel u:r:phhsu_daemon:s0`). A boot service labelled into that domain runs as
+   unconfined root, so there’s nothing to patch. This matters because **Magisk’s
+   boot‑script runner does not execute on this device**, so `service.d`/`post-fs-data.d`
+   never fire — the usual root‑autostart route is a dead end here.
+
+So we register a plain **`init` service** that starts the daemon at `boot_completed`.
+`init` then owns and **supervises** it: if the daemon ever dies, init respawns it — more
+robust than the PC re‑arm.
+
+### The service (`device/usbc-audio-autostart.rc`)
+
+```
+service usbc_audio_daemon /system/bin/sh /data/adb/usbc_daemon_loop.sh
+    user root
+    group root system
+    seclabel u:r:phhsu_daemon:s0
+    disabled
+
+on property:sys.boot_completed=1
+    start usbc_audio_daemon
+```
+
+### Install
+
+```sh
+adb root
+adb push device/usbc_daemon_loop.sh  /data/adb/ && adb shell chmod 755 /data/adb/usbc_daemon_loop.sh
+adb push device/install-autostart.sh /data/adb/ && adb shell sh /data/adb/install-autostart.sh
+adb reboot
+```
+
+`install-autostart.sh` remounts `/vendor` read‑write and drops the service into
+`/vendor/etc/init/` with the correct SELinux label.
+
+> **Heads‑up on the F21 Pro’s full `/vendor`:** the partition is 100 % used, so a brand‑new
+> file can’t be allocated (the “free” space `df` reports is unusable reserve). The installer
+> falls back to **appending the service block into an existing `.rc`’s last‑block slack** —
+> an in‑place grow that needs no new block. Corollary: **never `cp`/rewrite a file on a full
+> `/vendor`** — a truncate frees its block and you can’t get it back. Append only.
+
+### Verify
+
+```sh
+adb shell getprop init.svc.usbc_audio_daemon   # -> running
+```
+
+Confirmed untethered: booted on battery with no cable attached, the daemon armed itself at
+~40 s of uptime — minutes before USB was ever reconnected. The port `option` write is still
+a runtime toggle you press when you plug the DAC in; this only makes the *daemon* survive a
+reboot on its own.
+
 ## Repository layout
 
 - **`device/`** — root scripts that live on the phone under `/data/adb/`
   - `usbc_audio_toggle.sh` — the self-correcting ON↔OFF toggle (the core tool)
   - `usbc_audio_daemon.sh` — a `service.d` watcher that runs the toggle when a flag file is tapped (front-end for a widget)
-  - `usbc_daemon_loop.sh` — the watcher loop (re-armed each boot)
+  - `usbc_daemon_loop.sh` — the watcher loop
+  - `usbc-audio-autostart.rc` — `init` service that starts the daemon on boot (see “Auto‑start on boot”)
+  - `install-autostart.sh` — installs that service into `/vendor/etc/init/` (on‑device, no PC)
 - **`linux/`** — host-side helpers, run from a PC over `adb`
   - `usbc-rearm` — (re)start the on-device daemon after a reboot (idempotent)
   - `usbc-rearm-watch` — auto-arm on each USB connect
@@ -179,10 +245,12 @@ adb shell sh /data/adb/usbc_audio_toggle.sh    # -> "USB-C audio ON"
 - **adb shows the device then loses it after the toggle.** Expected if you toggled while
   on the PC — host mode fights the PC's VBUS and resets the bus (see the caveat above).
   Re-run `adb kill-server && adb start-server` to re-grab the re-enumerated device.
-- **Daemon won't auto-start on a fresh boot (no PC).** On this device Magisk's boot-script
-  runner doesn't execute, so `service.d` never fires on its own — the daemon must be armed
-  from a PC after each reboot (that's what the `linux/`/`windows/` helpers are for). The
-  daemon self-guards against duplicates via a pidfile, so arming it more than once is safe.
+- **Daemon won't auto-start on a fresh boot (no PC).** Magisk's boot-script runner doesn't
+  execute on this device, so `service.d` never fires on its own. The proper fix is the
+  on-device **[Auto‑start on boot](#auto-start-on-boot-on-device-no-pc-needed)** `init`
+  service (`install-autostart.sh`); the `linux/`/`windows/` PC helpers remain as a fallback
+  for arming it while tethered. The daemon self-guards against duplicates via a pidfile, so
+  arming it more than once (e.g. init + a PC re-arm) is safe.
 
 ## License
 
