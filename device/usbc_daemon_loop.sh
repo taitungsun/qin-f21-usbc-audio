@@ -20,6 +20,9 @@ echo $$ > "$PIDF"
 
 echo "$(date) started pid=$$" >> "$LOG"
 while [ ! -d /data/data/com.termux/files/home ]; do sleep 5; done
+OPT=/sys/module/usb20_host/parameters/option
+IDLE_OFF=10   # seconds of host-mode-on-but-no-earphone before auto-revert
+gone=0
 while true; do
     if [ -f "$REQ" ]; then
         rm -f "$REQ"
@@ -28,6 +31,19 @@ while true; do
         chown "$TUID:$TUID" "$RES" 2>/dev/null
         chcon "$TCTX" "$RES" 2>/dev/null
         echo "$(date) processed: $out" >> "$LOG"
+    fi
+    # auto-off safeguard: if host mode is on (option=1) but no earphone/DAC
+    # (card2) has been present for IDLE_OFF seconds, revert it. Stops VBUS
+    # sitting on ~100 mA and blocking charge after the earphone is unplugged.
+    if [ "$(cat "$OPT" 2>/dev/null)" = "1" ] && [ ! -d /proc/asound/card2 ]; then
+        gone=$((gone + 1))
+        if [ "$gone" -ge "$IDLE_OFF" ]; then
+            echo 2 > "$OPT" 2>/dev/null
+            echo "$(date) auto-off: host mode on, no earphone ${IDLE_OFF}s -> reverted" >> "$LOG"
+            gone=0
+        fi
+    else
+        gone=0
     fi
     sleep 1
 done

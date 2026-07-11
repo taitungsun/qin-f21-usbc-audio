@@ -104,8 +104,8 @@ su -c 'sh /data/adb/usbc_audio_toggle.sh'
 
 ## Notes & caveats
 
-- **It's a manual toggle.** The port controller can't sense the audio accessory, so the phone can't auto‑switch — you run the toggle when you plug the DAC in (and again to turn it off).
-- **Power:** host mode holds VBUS at ~100 mA. The script’s auto‑revert means it’s only on while a DAC is actually present.
+- **It's a manual toggle to turn ON.** The port controller can't sense the audio accessory, so the phone can't auto‑switch — you run the toggle when you plug the DAC in. Turning **off** is now automatic (see below).
+- **Power:** host mode holds VBUS at ~100 mA. Two things keep it from being left on to drain the battery (and block charging): the toggle **auto‑reverts if no DAC enumerates**, and the watcher daemon has an **auto‑off safeguard** — if host mode is on but no DAC (`card 2`) has been present for ~10 s, it reverts host mode on its own. So unplugging the DAC without toggling off can no longer leave VBUS draining. (Verified on hardware: pulling the DAC drops `card 2`, and the daemon reverts within ~10 s.)
 - **⚠️ Don’t toggle while plugged into a PC or charger.** Forcing host mode then fights the incoming VBUS → contention + a USB reset. Only toggle with the **bare DAC** in the port.
 - **The port toggle reverts on reboot** (it’s a runtime kernel write) — press it again after you plug the DAC back in. The *watcher daemon*, however, can be made to start itself every boot: see **[Auto‑start on boot](#auto-start-on-boot-on-device-no-pc-needed)**.
 
@@ -144,6 +144,12 @@ usbc-rearm          # from linux/usbc-rearm
 The daemon (`usbc_daemon_loop.sh`) watches for `~/.usbc_toggle_req` and runs the toggle
 when it appears. Tapping the widget drops the flag file; the daemon picks it up within
 ~1 s, runs the toggle, and the result toast pops up.
+
+The same loop also runs the **auto‑off safeguard**: on each pass it checks whether host
+mode is on (`option` = 1) while no DAC (`card 2`) is present, and after ~10 s of that
+(a debounce that ignores the brief enumeration VBUS race) it writes `2` to turn host mode
+back off. This means host mode can't outlive the DAC — unplug the earphone and VBUS stops
+on its own, so it never sits draining ~100 mA or blocking a charge.
 
 **Re-arm after every reboot** — `service.d` doesn’t fire on this device (Magisk boot runner
 is dead), so the daemon needs to be started from a PC. The PC-side watcher scripts
